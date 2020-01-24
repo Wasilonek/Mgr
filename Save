@@ -1,0 +1,335 @@
+import cv2
+import numpy as np
+import math
+
+
+# -------------------------------  Helpers function
+def set_text_in_window(image_to_drawn, text_to_set, position):
+    cv2.putText(image_to_drawn, text_to_set, position,
+                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+
+
+def get_dist_between_two_point(point_1, point_2):
+    x_1, y_1 = point_1
+    x_2, y_2 = point_2
+    return math.sqrt(pow((x_2 - x_1), 2)) + (pow((y_2 - y_1), 2))
+
+
+class Point:
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+
+
+# Returns true if two rectangles(l1, r1)
+# and (l2, r2) overlap
+def doOverlap(l1, r1, l2, r2):
+    # If one rectangle is on left side of other
+    if (l1.x > r2.x or l2.x > r1.x):
+        return False
+
+    # If one rectangle is above other
+    if (l1.y < r2.y or l2.y < r1.y):
+        return False
+
+    return True
+
+
+def calculateIntersection(a0, a1, b0, b1):
+    if a0 >= b0 and a1 <= b1:  # Contained
+        intersection = a1 - a0
+    elif a0 < b0 and a1 > b1:  # Contains
+        intersection = b1 - b0
+    elif a0 < b0 and a1 > b0:  # Intersects right
+        intersection = a1 - b0
+    elif a1 > b1 and a0 < b1:  # Intersects left
+        intersection = b1 - a0
+    else:  # No intersection (either side)
+        intersection = 0
+
+    return intersection
+
+
+def union(a, b):
+    x_1 = min(a[0], b[0])
+    y_1 = min(a[1], b[1])
+    x_2 = max(a[2], b[2])
+    y_2 = max(a[3], b[3])
+    return [x_1, y_1, x_2, y_2]
+
+
+# -------------------------------
+
+def find_equal_dendrites(image_to_draw):
+    or_w, or_h, or_channel = image_to_draw.shape
+    center_x = int(or_w / 2)
+    center_y = int(or_h / 2)
+
+    gray = cv2.cvtColor(image_to_draw, cv2.COLOR_BGR2GRAY)
+
+    x_set = set()
+    y_set = set()
+
+    corners = cv2.goodFeaturesToTrack(gray, 100, 0.05, 0)
+    corners = np.int0(corners)
+    for i in corners:
+        x, y = i.ravel()
+        if (math.sqrt(pow((center_x - x), 2)) + (pow((center_y - y), 2))) > 1000:
+            if (math.sqrt(pow((center_x - x), 2)) + (pow((center_y - y), 2))) < 18000:
+                x_set.add(x)
+                y_set.add(y)
+                # cv2.circle(image_to_draw, (x, y), 2, 255, -1)
+
+    x_set = list(x_set)
+    y_set = list(y_set)
+    x_set.sort()
+    y_set.sort()
+    # print(len(x_set))
+
+    # cv2.rectangle(image_to_draw, (x_set[0], y_set[0]), (x_set[-1], y_set[-1]), (255, 0, 0), 2)
+
+    section_width = x_set[-1] - x_set[0]
+    section_height = y_set[-1] - y_set[0]
+
+    return section_width, section_height, section_width * section_height
+
+
+def draw_center(lh, ls, lv, uh, us, uv, image_to_draw):
+    # Size of the result image
+    image_width = image_to_draw.shape[0]
+    image_height = image_to_draw.shape[1]
+
+    # Change color to HSV
+    hsv = cv2.cvtColor(clipped_image, cv2.COLOR_BGR2HSV)
+
+    # Take pixels with color in specific range
+    mask = cv2.inRange(hsv, np.array([lh, ls, lv]), np.array([uh, us, uv]))
+
+    # Remove noises
+    mask_blur = cv2.GaussianBlur(mask, (7, 7), 0)
+
+    # Threshold
+    ret, tresh = cv2.threshold(mask_blur, 200, 255, 0)
+
+    # Find contours
+    contours, hierarchy = cv2.findContours(tresh, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
+
+    # Calculate center of the image
+    center_x = int(image_width / 2)
+    center_y = int(image_height / 2)
+
+    areaArray = []
+    for i, c in enumerate(contours):
+        area = cv2.contourArea(c)
+        areaArray.append(area)
+
+    # Sort the array by area
+    sorted_contours = sorted(zip(areaArray, contours), key = lambda x: x[0], reverse = True)
+
+    # Find the largest contours
+    largest_contour = sorted_contours[0][1]
+    second_largest_contour = sorted_contours[1][1]
+
+    # Find largest contours cords
+    area_x, area_y, area_w, area_h = cv2.boundingRect(largest_contour)
+    max_x, max_y, max_w, max_h = cv2.boundingRect(second_largest_contour)
+
+    #
+    point_1_0 = Point(max_x, max_y)
+    point_1_1 = Point((max_x + max_w), (max_y + max_h))
+    intersecting = []
+    noises = []
+
+    AREA = float((point_1_1.x - point_1_0.x) * (point_1_1.y - point_1_0.y))
+    print("AREA: ", point_1_0.x, point_1_0.y, point_1_1.x, point_1_1.y)
+    #
+
+    # Find every contour in union with the second largest (in center)
+    min_size_of_contour = 30  # Maybe to change according to image size
+    for contour in contours:
+        contour_size = cv2.contourArea(contour)
+        if contour_size > min_size_of_contour:
+            x, y, w, h = cv2.boundingRect(contour)
+            if x != max_x and y != max_y and x != area_x and y != area_y:
+                point_2_0 = Point(x, y)
+                point_2_1 = Point(x + w, y + h)
+                width = calculateIntersection(point_1_0.x, point_1_1.x, point_2_0.x, point_2_1.x)
+                height = calculateIntersection(point_1_0.y, point_1_1.y, point_2_0.y, point_2_1.y)
+                area = width * height
+                percent = area / AREA
+
+                if percent > 0:
+                    intersecting.append([point_2_0.x, point_2_0.y, point_2_1.x, point_2_1.y])
+                    cv2.rectangle(image_to_draw, (point_2_0.x, point_2_0.y), (point_2_1.x, point_2_1.y), (255, 255, 0),1)
+                else:
+                    cv2.rectangle(image_to_draw, (point_2_0.x, point_2_0.y), (point_2_1.x, point_2_1.y), (0, 0, 255), 1)
+
+    # cv2.rectangle(image_to_draw, (max_x, max_y), (max_x + max_w, max_y + max_h), (255, 255, 0), 1)
+
+    for inter in intersecting:
+        print(max_x, max_y, max_w, max_h, " / ", inter)
+        result = union([max_x, max_y, max_x + max_w,  max_y + max_h], inter)
+        print("Result: ", result)
+
+    cv2.rectangle(image_to_draw, (result[0], result[1]), (result[2], result[3]), (255, 255, 0), 1)
+
+    # Show all contours larger than specific size
+    # min_size_of_contour = 30  # Maybe to change according to image size
+    # for contour in contours:
+    #     contour_size = cv2.contourArea(contour)
+    #     if contour_size > min_size_of_contour:
+    #         x, y, w, h = cv2.boundingRect(contour)
+    #         if x != max_x and y != max_y and x != area_x and y != area_y:
+    #             cv2.rectangle(image_to_draw, (x, y), (x + w, y + h), (0, 255, 0), 1)
+
+    # cv2.rectangle(image_to_draw, (x_set[0], y_set[0]), (x_set[-1], y_set[-1]), (0, 255, 0), 1)
+
+    area_width = result[2] - result[0]
+    area_height = result[3] - result[1]
+    return area_width, area_height, area_width * area_width
+
+
+
+def draw_dendrites(min, max, tr, image_to_draw):
+    edges = cv2.Canny(clipped_image, min, max)
+    mask_blur = cv2.GaussianBlur(edges, (15, 15), 0)
+    ret, tresh = cv2.threshold(mask_blur, tr, 255, 0)
+
+    lines = cv2.HoughLinesP(tresh, 1, np.pi / 30, 5)
+
+    x_set = set()
+    y_set = set()
+    for line in lines:
+        x1, y1, x2, y2 = line[0]
+        len = math.sqrt(pow((x2 - x1), 2) + pow((y2 - y1), 2))
+        if len >= 5:
+            x_set.add(x1)
+            x_set.add(x2)
+            y_set.add(y1)
+            y_set.add(y2)
+
+    x_set = list(x_set)
+    y_set = list(y_set)
+    x_set.sort()
+    y_set.sort()
+
+    # cv2.rectangle(image_to_draw, (x_set[0], y_set[0]), (x_set[-1], y_set[-1]), (0, 0, 255), 1)
+
+    area_width = x_set[-1] - x_set[0]
+    area_height = y_set[-1] - y_set[0]
+    return area_width, area_height, area_width * area_width
+
+
+def clip_image(percent, image_to_clip):
+    height, width, channel = input.shape
+
+    percent = percent
+    x1 = int(height * percent)
+    y1 = int(width * percent)
+    x2 = int(height - height * percent)
+    y2 = int(width - width * percent)
+
+    upper_left = (x1, y1)
+    bottom_right = (x2, y2)
+    rect_img = image_to_clip[upper_left[1]: bottom_right[1], upper_left[0]: bottom_right[0]]
+    return rect_img
+
+
+# *********** MAIN
+# image_paths_test = ["images/test-1.png", "images/test-2.png", "images/test-3.png"]
+image_paths_test = ["images/img-20.JPG"]
+
+image_paths_1 = ["images/img-1.JPG", "images/img-2.JPG", "images/img-3.JPG", "images/img-4.JPG"]
+
+image_paths_2 = ["images/img-5.JPG", "images/img-6.JPG", "images/img-7.JPG"]
+
+image_paths_3 = ["images/img-10.JPG", "images/img-11.JPG", "images/img-12.JPG", "images/img-13.JPG"]
+
+image_paths_4 = ["images/img-14.JPG", "images/img-15.JPG", "images/img-16.JPG", "images/img-17.JPG"]
+
+image_paths_5 = ["images/img-18.JPG", "images/img-20.JPG", "images/img-21.JPG"]
+
+image_paths_6 = ["images/img-22.JPG", "images/img-23.JPG", "images/img-24.JPG", "images/img-25.JPG"]
+
+image_paths_7 = ["images/img-26.JPG", "images/img-27.JPG", "images/img-28.JPG", "images/img-29.JPG"]
+
+image_paths_8 = ["images/img-30.JPG", "images/img-31.JPG", "images/img-32.JPG", "images/img-33.JPG"]
+
+image_paths_9 = ["images/img-34.JPG", "images/img-35.JPG", "images/img-36.JPG", "images/img-37.JPG"]
+
+# Main Loop
+for index, image in enumerate(image_paths_7):
+    # Set window parameters
+    title = "Result " + str(index)
+    cv2.namedWindow(title, cv2.WINDOW_AUTOSIZE)
+    cv2.moveWindow(title, 20, 20)
+
+    # Set size of output image
+    result_width = 700
+    result_height = 700
+
+    # Process image
+    input = cv2.resize(cv2.imread(image), (result_width, result_height), interpolation = cv2.INTER_AREA)
+    clipped_image = clip_image(0.05, input)
+
+    # Copy image for options
+    drawn_result_1 = clipped_image.copy()
+    drawn_result_2 = clipped_image.copy()
+
+    # Set border values
+    # top = int(0.3 * clipped_image.shape[0])
+    top = 120
+    bottom = 15
+    left = 25
+    right = 25
+    border_color = [152, 89, 59]
+    border_type = cv2.BORDER_CONSTANT
+
+    # Calculate image size after cropping
+    image_area = clipped_image.shape[0] * clipped_image.shape[1]
+
+    center_1_width, center_1_height, center_area = draw_center(0, 0, 70, 255, 255, 255, drawn_result_1)
+    dendrites_1_width, dendrites_1_height, dendrites_area = draw_dendrites(220, 240, 70, drawn_result_1)
+    equal_1_width, equal_1_height, equal_area = find_equal_dendrites(drawn_result_1)
+
+    # print(center_1_width, center_1_height, center_1_width * center_1_height)
+    # print(equal_1_width, equal_1_height, equal_1_width * equal_1_height)
+    # print(dendrites_1_width, dendrites_1_height, dendrites_1_width * dendrites_1_height)
+    # print(drawn_result_1.shape[0], drawn_result_1.shape[1], drawn_result_1.shape[0] * drawn_result_1.shape[1])
+
+    # Calculate percents of every area
+    center_percent = round((center_area / image_area) * 100, 2)
+    equal_percent = round((((equal_area - center_area) / image_area) * 100), 2)
+    dendrites_percent = round((((dendrites_area - equal_area) / image_area) * 100), 2)
+    frozen_percent = round((((image_area - dendrites_area) / image_area) * 100), 2)
+
+    # drawn_result_1 = cv2.copyMakeBorder(drawn_result_1, top, bottom, left, right, border_type, None, border_color)
+    #
+    # # Set text for first option
+    # set_text_in_window(drawn_result_1, "Frozen crystal zone: " + str(frozen_percent) + "%", (25, 25))
+    # set_text_in_window(drawn_result_1, "Dendrites zone: " + str(dendrites_percent) + "%", (25, 50))
+    # set_text_in_window(drawn_result_1, "Equal Dendrites: " + str(equal_percent) + "%", (25, 75))
+    # set_text_in_window(drawn_result_1, "Axial thrust: " + str(center_percent) + "%", (25, 100))
+
+    # center_2_width, center_2_height, center_area = draw_center(0, 0, 70, 255, 255, 255, drawn_result_2)
+    # dendrites_2_width, dendrites_2_height, dendrites_area = draw_dendrites(120, 120, 90, drawn_result_2)
+    # equal_width_2, equal_height_2, equal_area = find_equal_dendrites(drawn_result_2)
+    #
+    # center_percent = round((center_area / image_area) * 100, 2)
+    # equal_percent = round((((equal_area - center_area) / image_area) * 100), 2)
+    # dendrites_percent = round((((dendrites_area - equal_area) / image_area) * 100), 2)
+    # frozen_percent = round((((image_area - dendrites_area) / image_area) * 100), 2)
+
+    # drawn_result_2 = cv2.copyMakeBorder(drawn_result_2, top, bottom, left, right, border_type, None, border_color)
+    #
+    # # Set text for second option
+    # set_text_in_window(drawn_result_2, "Frozen crystal zone: " + str(frozen_percent) + "%", (25, 25))
+    # set_text_in_window(drawn_result_2, "Dendrites zone: " + str(dendrites_percent) + "%", (25, 50))
+    # set_text_in_window(drawn_result_2, "Equal Dendrites: " + str(equal_percent) + "%", (25, 75))
+    # set_text_in_window(drawn_result_2, "Axial thrust: " + str(center_percent) + "%", (25, 100))
+
+    # Show every option
+    # cv2.imshow(title, np.hstack((drawn_result_1, drawn_result_2)))
+    cv2.imshow(title, drawn_result_1)
+
+cv2.waitKey(0)
